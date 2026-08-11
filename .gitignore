@@ -1,0 +1,21 @@
+# -- Secrets (never commit) --
+.env
+.env.*
+!.env.example
+
+# -- Python --
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# -- Data / local stores --
+chroma_db/
+
+# -- OS --
+.DS_Store
+
+# Note: frontend/ has its own .gitignore (node_modules, .next, etc.)

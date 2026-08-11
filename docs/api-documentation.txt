@@ -1,0 +1,94 @@
+AutoMind Inc. — API Documentation
+
+Version: 2.1.0
+Last Updated: April 2025
+
+1. Authentication
+All API requests require a Bearer token in the Authorization header.
+Example: Authorization: Bearer am_sk_live_abc123xyz
+
+API keys can be generated from the Dashboard → Settings → API Keys page. Each key has a scope: read-only, write, or admin. Keys can be revoked at any time.
+
+2. Base URL
+Production: https://api.automind.ai/v2
+Staging: https://staging-api.automind.ai/v2
+
+3. Endpoints
+
+3.1 POST /chat/completions
+Generate a chat completion response.
+
+Request body:
+{
+  "model": "automind-pro" | "automind-lite" | "gpt-4o" | "claude-3-5-sonnet",
+  "messages": [{"role": "system"|"user"|"assistant", "content": "string"}],
+  "max_tokens": 1024,
+  "temperature": 0.7,
+  "stream": true | false
+}
+
+Response (non-streaming):
+{
+  "id": "chatcmpl-abc123",
+  "choices": [{"message": {"role": "assistant", "content": "..."}}],
+  "usage": {"prompt_tokens": 50, "completion_tokens": 100, "total_tokens": 150}
+}
+
+3.2 POST /embeddings
+Generate embeddings for input text.
+
+Request body:
+{
+  "model": "automind-embed-v2",
+  "input": "Your text here" | ["text1", "text2"]
+}
+
+Response:
+{
+  "data": [{"embedding": [0.12, -0.34, ...], "index": 0}],
+  "usage": {"total_tokens": 10}
+}
+
+3.3 GET /models
+List available models.
+
+Response:
+{
+  "models": [
+    {"id": "automind-pro", "context_window": 128000, "pricing": "$0.01/1K tokens"},
+    {"id": "automind-lite", "context_window": 32000, "pricing": "$0.002/1K tokens"}
+  ]
+}
+
+3.4 POST /rag/query
+Query documents using RAG retrieval.
+
+Request body:
+{
+  "query": "What is the refund policy?",
+  "collection": "company-docs",
+  "top_k": 5
+}
+
+Response:
+{
+  "answer": "...",
+  "sources": [{"document": "refund-policy.pdf", "chunk": "...", "score": 0.92}]
+}
+
+4. Error Codes
+- 400: Bad Request — invalid JSON or missing required fields
+- 401: Unauthorized — invalid or expired API key
+- 403: Forbidden — API key lacks required scope
+- 422: Unprocessable Entity — valid JSON but validation failed
+- 429: Too Many Requests — rate limit exceeded (see Retry-After header)
+- 500: Internal Server Error — contact support
+
+5. Rate Limits
+Rate limits are applied per API key. When exceeded, the API returns 429 with a Retry-After header indicating seconds to wait. Implement exponential backoff in your client.
+
+6. Webhooks
+Configure webhooks from Dashboard → Settings → Webhooks. Events:
+- chat.completed — fired when a chat completion finishes
+- embedding.completed — fired when embedding generation finishes
+- usage.threshold — fired when usage exceeds 80% of plan limit

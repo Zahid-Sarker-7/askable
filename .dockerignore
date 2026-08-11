@@ -1,0 +1,18 @@
+# Keep the image small and the build fast — exclude everything the backend
+# container doesn't need. docs/ IS kept (boot-ingest reads the sample docs).
+
+.venv/
+__pycache__/
+*.pyc
+chroma_db/
+frontend/
+.git/
+.gitignore
+*.md
+ARCHITECTURE.md
+.env
+.env.*
+tests/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

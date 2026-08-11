@@ -1,0 +1,65 @@
+AutoMind Inc. — Employee Onboarding Guide
+
+Department: Engineering
+Last Updated: May 2025
+
+1. First Day Checklist
+- Receive laptop (MacBook Pro M3 or M4, your choice)
+- Set up corporate email (firstname.lastname@automind.ai)
+- Enroll in multi-factor authentication (MFA)
+- Join Slack workspace: automind.slack.com
+- Request access to GitHub organization: github.com/automind-ai
+- Complete security awareness training (mandatory, deadline: end of Week 1)
+
+2. Development Environment Setup
+All engineers use the following stack:
+- Python 3.12+ (primary backend language)
+- Node.js 20+ (frontend and tooling)
+- Docker Desktop (containerization)
+- VS Code (recommended) or JetBrains IDE
+- Git with signed commits (GPG key required)
+
+To set up the development environment:
+a) Clone the monorepo: git clone git@github.com:automind-ai/platform.git
+b) Run: make setup (installs all dependencies)
+c) Run: make dev (starts all services locally)
+d) Verify: curl http://localhost:8000/health should return {"status": "ok"}
+
+3. Team Structure
+Engineering is organized into squads:
+- Platform Squad: Core API, infrastructure, DevOps (6 engineers)
+- AI Squad: Model training, RAG pipeline, evaluation (5 engineers)
+- Frontend Squad: Dashboard, chat UI, billing pages (4 engineers)
+- Data Squad: Analytics, data pipeline, reporting (3 engineers)
+
+Each squad has a tech lead and runs 2-week sprints using Jira. Standups are daily at 10:00 AM EST.
+
+4. Code Review Process
+All code changes require:
+- At least 1 approval from a squad member
+- CI pipeline must pass (lint, test, type-check)
+- No decrease in test coverage
+- PR description must link to Jira ticket
+- Changes to API contracts require 2 approvals
+
+Code style: We use Black (Python), Prettier (TypeScript), and enforce via pre-commit hooks.
+
+5. On-Call Rotation
+After your first month, you'll join the on-call rotation:
+- Rotation period: 1 week
+- Primary on-call responds to PagerDuty alerts within 15 minutes
+- Secondary on-call is backup if primary doesn't respond within 30 minutes
+- Compensation: $500/week on-call stipend + $200 per incident handled
+- Runbooks are in Confluence under "Incident Response"
+
+6. Learning & Development
+- $2,000/year learning budget (conferences, courses, books)
+- Weekly tech talks (Fridays 3:00 PM EST)
+- Access to O'Reilly Learning platform
+- Hack days: Last Friday of every month (work on anything AI-related)
+
+7. Key Contacts
+- Engineering Manager: Sarah Chen (sarah.chen@automind.ai)
+- CTO: Mark Rodriguez (mark.r@automind.ai)
+- IT Support: it-support@automind.ai (Slack: #it-help)
+- HR: hr@automind.ai
