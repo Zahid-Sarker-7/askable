@@ -25,9 +25,10 @@ WORKDIR /home/user/app
 
 # --- python deps ---
 # Install CPU-only torch first (default index pulls the multi-GB CUDA build).
-COPY --chown=user requirements.txt .
+# The Docker image runs the es/memory profile, so it needs the full ML stack.
+COPY --chown=user requirements.txt requirements-full.txt ./
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu \
-        -r requirements.txt
+        -r requirements-full.txt
 
 # --- app code (see .dockerignore for exclusions) ---
 COPY --chown=user . .

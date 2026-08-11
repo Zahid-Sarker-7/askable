@@ -70,19 +70,20 @@ and constrains the model to answer only from them. Full walkthrough with diagram
 
 ---
 
-## Two backend profiles
+## Three backend profiles
 
-Askable ships one pipeline with two interchangeable retrieval backends (chosen by the
-`BACKEND` env var):
+Askable ships one pipeline with three interchangeable retrieval backends (chosen by the
+`BACKEND` env var) — the same `get_search_backend()` seam:
 
-| | **Memory profile** | **Elasticsearch profile** |
-|---|---|---|
-| Retrieval | in-process (numpy kNN + BM25) | Elasticsearch (dense + BM25) |
-| Cache | none (`NullCache`) | Redis semantic cache |
-| Infra needed | **none** | Docker (ES + Redis) |
-| Sample docs | auto-ingested at startup | `make ingest` (manual) |
-| Uploads persist restart | no (in-RAM) | yes (ES volume) |
-| Use it for | quick demo, the free hosted Space | full/prod, benchmarking |
+| | **`memory`** | **`elasticsearch`** | **`upstash`** |
+|---|---|---|---|
+| Retrieval | in-process numpy kNN + BM25 | Elasticsearch (dense + BM25) | Upstash Vector (serverless hybrid) |
+| Embeddings | local (`sentence-transformers`) | local | **server-side** (Upstash-hosted) |
+| Rerank | cross-encoder | cross-encoder | none (Upstash fuses) |
+| Cache | none | Redis semantic cache | none |
+| Infra / deps | none; **torch** | Docker (ES+Redis); **torch** | none; **torch-free** |
+| Uploads persist | no (in-RAM) | yes (ES volume) | yes (Upstash) |
+| Use it for | local zero-infra dev | full/prod, benchmarking | **the free serverless deploy (Vercel)** |
 
 ## Run locally
 
@@ -118,29 +119,41 @@ Infra / data commands:
 > The `memory` profile has nothing to re-index — restart and the sample docs rebuild from
 > `docs/` at boot. `make reindex` is ES-only.
 
+### Upstash profile (serverless, torch-free)
+
+```bash
+cp .env.example .env    # set GROQ_API_KEY + UPSTASH_VECTOR_REST_URL/_TOKEN
+make ingest-upstash     # one-time: load sample docs into Upstash as owner="public"
+make backend-upstash    # backend [:8000, BACKEND=upstash]; run frontend separately
+```
+Create the Upstash index first (see Deployment). No local models are loaded.
+
 ## Configuration
 
 | Env var | Purpose |
 |---------|---------|
 | `GROQ_API_KEY` | **required** — Groq API key for the LLM |
-| `BACKEND` | `memory` (in-process) or `elasticsearch` |
+| `BACKEND` | `memory`, `elasticsearch`, or `upstash` |
+| `UPSTASH_VECTOR_REST_URL` / `_TOKEN` | required for `BACKEND=upstash` |
 | `FRONTEND_ORIGIN` | deployed frontend URL (e.g. `https://askable.vercel.app`) for CORS |
 | `NEXT_PUBLIC_API_URL` | (frontend) backend base URL; defaults to `http://localhost:8000` |
 
 See [.env.example](.env.example) for the full list.
 
-## Deployment (free tier)
+## Deployment (free, serverless)
 
-- **Frontend → Vercel:** root directory `frontend`, set `NEXT_PUBLIC_API_URL` to the API URL.
-- **Backend → Hugging Face Space (Docker):** this repo builds directly (`Dockerfile`,
-  `app_port: 7860`, `BACKEND=memory`). Set `GROQ_API_KEY` and `FRONTEND_ORIGIN` as Space secrets.
+Both halves deploy free on Vercel; retrieval is Upstash Vector (free tier).
 
-Run the container yourself:
+1. **Upstash Vector** → create a **Hybrid** index with Upstash-hosted **dense** + **sparse**
+   embedding models; copy `UPSTASH_VECTOR_REST_URL` + `UPSTASH_VECTOR_REST_TOKEN`.
+2. **Ingest samples once:** `make ingest-upstash`.
+3. **Backend → Vercel** (root = repo root; `vercel.json` routes to `api/index.py`). Env:
+   `GROQ_API_KEY`, `UPSTASH_VECTOR_REST_URL`, `UPSTASH_VECTOR_REST_TOKEN`, `BACKEND=upstash`,
+   `FRONTEND_ORIGIN`. Torch-free bundle (see `requirements.txt`).
+4. **Frontend → Vercel** (root = `frontend`). Env: `NEXT_PUBLIC_API_URL` = the backend URL.
 
-```bash
-docker build -t askable .
-docker run -p 7860:7860 -e GROQ_API_KEY=$GROQ_API_KEY askable   # BACKEND=memory baked in
-```
+Self-hosting the full stack instead? The `Dockerfile` (uses `requirements-full.txt`) runs the
+`memory`/`elasticsearch` profile on any container host.
 
 ## Project layout
 
@@ -154,7 +167,9 @@ askable/
 ├── backends/               pluggable retrieval + cache
 │   ├── elasticsearch_backend.py   dense + BM25 + RRF
 │   ├── memory_backend.py          in-process numpy kNN + BM25 + RRF
+│   ├── upstash_backend.py         serverless hybrid (server-side embeddings)
 │   └── redis_cache.py / null_cache.py
+├── api/index.py            Vercel serverless entrypoint (imports the FastAPI app)
 ├── guardrails/             input + output (faithfulness) checks
 ├── docs/                   sample knowledge base (fictional company)
 ├── Dockerfile              Hugging Face Space (in-memory profile)

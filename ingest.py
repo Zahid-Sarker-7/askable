@@ -1,9 +1,7 @@
 import logging
 import os
 
-from langchain_community.document_loaders import PyMuPDFLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
 
 from backends import get_embedding_model, get_search_backend
 from models import (
@@ -23,6 +21,14 @@ log = logging.getLogger("askable.ingest")
 DOCS_DIR = "docs"
 
 
+def _model_or_none():
+    """The local embedding model, or None when the backend embeds server-side
+    (upstash). Lets the ingest path stay torch-free for the serverless profile."""
+    if getattr(get_search_backend(), "server_side_embeddings", False):
+        return None
+    return get_embedding_model()
+
+
 def load_local_documents(docs_dir: str) -> list[dict]:
     files = sorted(os.listdir(docs_dir))
     log.info("Found %d files in %s: %s", len(files), docs_dir, files)
@@ -30,12 +36,14 @@ def load_local_documents(docs_dir: str) -> list[dict]:
     documents = []
     for filename in files:
         filepath = os.path.join(docs_dir, filename)
+        # Read directly (no langchain loaders) to keep the serverless deps light.
         if filename.endswith(".pdf"):
-            pages = PyMuPDFLoader(filepath).load()
-            text = "\n\n".join(p.page_content for p in pages)
+            import fitz  # PyMuPDF
+            doc = fitz.open(filepath)
+            text = "\n\n".join(page.get_text() for page in doc)
         elif filename.endswith(".txt"):
-            pages = TextLoader(filepath).load()
-            text = pages[0].page_content
+            with open(filepath, encoding="utf-8", errors="replace") as f:
+                text = f.read()
         else:
             continue
 
@@ -91,7 +99,7 @@ async def get_current_version(backend, doc_id: str) -> int:
 
 async def ingest_single_document(
     backend,
-    model: SentenceTransformer,
+    model,
     text: str,
     source: str,
     source_title: str = "",
@@ -115,7 +123,11 @@ async def ingest_single_document(
 
     child_texts = [pc["child_text"] for pc in parent_children]
     ids = [f"{doc_id}_chunk_{i}" for i in range(len(child_texts))]
-    embeddings = model.encode(child_texts).tolist()
+    # Server-side backends (upstash) embed on upsert — no local model needed.
+    if getattr(backend, "server_side_embeddings", False):
+        embeddings = [None] * len(child_texts)
+    else:
+        embeddings = model.encode(child_texts).tolist()
 
     for i, (chunk_id, child_text, embedding, pc) in enumerate(zip(ids, child_texts, embeddings, parent_children)):
         metadata = {
@@ -139,7 +151,7 @@ async def ingest_single_document(
     return len(child_texts)
 
 
-async def _ingest_docs(backend, model: SentenceTransformer, documents: list[dict]) -> int:
+async def _ingest_docs(backend, model, documents: list[dict]) -> int:
     total = 0
     for doc in documents:
         total += await ingest_single_document(
@@ -190,7 +202,7 @@ async def ingest_from_bytes(
     backend = get_search_backend()
     chunks = await ingest_single_document(
         backend=backend,
-        model=get_embedding_model(),
+        model=_model_or_none(),
         text=text,
         source=source,
         source_title=source_title,
@@ -209,18 +221,18 @@ async def ingest_from_bytes(
 
 async def ingest_local():
     backend = get_search_backend()
-    model = get_embedding_model()
+    model = _model_or_none()
     documents = load_local_documents(DOCS_DIR)
     count = await _ingest_docs(backend, model, documents)
     total = await backend.count()
-    print(f"Local: {count} chunks from {len(documents)} docs — ES total: {total}")
+    print(f"Local: {count} chunks from {len(documents)} docs — backend total: {total}")
     return count
 
 
 async def ingest_confluence():
     from sources.confluence import fetch_pages
     backend = get_search_backend()
-    model = get_embedding_model()
+    model = _model_or_none()
     documents = fetch_pages()
     count = await _ingest_docs(backend, model, documents)
     print(f"Confluence: {count} chunks from {len(documents)} pages")
@@ -230,7 +242,7 @@ async def ingest_confluence():
 async def ingest_jira():
     from sources.jira_source import fetch_tickets
     backend = get_search_backend()
-    model = get_embedding_model()
+    model = _model_or_none()
     documents = fetch_tickets()
     count = await _ingest_docs(backend, model, documents)
     print(f"Jira: {count} chunks from {len(documents)} tickets")

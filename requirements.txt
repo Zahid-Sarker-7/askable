@@ -1,7 +1,6 @@
-# Askable backend — pinned for reproducible container builds.
-#
-# torch is installed CPU-only via the PyTorch CPU wheel index (see Dockerfile);
-# the default index would pull the multi-GB CUDA build we don't need.
+# Askable — SLIM deps for the serverless (upstash) profile / Vercel.
+# Torch-free: Upstash embeds server-side, so no sentence-transformers/torch here.
+# For the es/memory profiles (and the Dockerfile), use requirements-full.txt.
 
 # -- Web / API --
 fastapi==0.138.0
@@ -12,19 +11,10 @@ python-dotenv==1.2.2
 # -- LLM --
 groq==0.37.1
 
-# -- Retrieval / ML --
-sentence-transformers==5.6.0
-torch==2.12.1
-numpy==1.26.4
-rank-bm25==0.2.2
+# -- Serverless vector store (server-side hybrid embeddings) --
+upstash-vector==0.8.0
 
-# -- Document loading / chunking --
+# -- Document loading / chunking (light; no torch) --
 pymupdf==1.28.0
 python-docx==1.2.0
-langchain-community==0.2.19
 langchain-text-splitters==0.2.4
-
-# -- Optional backends (imported only when BACKEND=elasticsearch) --
-# Kept so the same image can run the ES+Redis profile if pointed at those services.
-elasticsearch==9.4.1
-redis==8.0.1

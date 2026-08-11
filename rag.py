@@ -3,9 +3,10 @@ import logging
 import uuid
 from typing import Literal
 
-from sentence_transformers import CrossEncoder
 from groq import Groq
 from dotenv import load_dotenv
+# NOTE: sentence_transformers / CrossEncoder (→ torch) is imported lazily in
+# _get_reranker(). The upstash profile skips reranking and must stay torch-free.
 
 from backends import executor, get_embedding_model, get_search_backend, get_cache_backend
 from compression import compress_context
@@ -24,12 +25,13 @@ MULTI_QUERY_COUNT = 3
 
 Strategy = Literal["standard", "hyde", "multi_query"]
 
-_reranker: CrossEncoder | None = None
+_reranker = None
 
 
-def _get_reranker() -> CrossEncoder:
+def _get_reranker():
     global _reranker
     if _reranker is None:
+        from sentence_transformers import CrossEncoder  # lazy: pulls torch
         _reranker = CrossEncoder(RERANKER_MODEL)
     return _reranker
 
@@ -40,9 +42,18 @@ def _get_reranker() -> CrossEncoder:
 # if opted in). Passing None searches everything — never do that from the API.
 
 async def hybrid_search(query: str, owners: list[str] | None = None) -> list[dict]:
-    """Embed query (CPU thread) + ES hybrid search (native async HTTP)."""
-    loop = asyncio.get_event_loop()
+    """Hybrid search. For local backends (es/memory) we embed the query in a
+    thread first; for server-side backends (upstash) we pass the raw text and the
+    backend embeds it — so no local model is touched."""
+    backend = get_search_backend()
 
+    if getattr(backend, "server_side_embeddings", False):
+        async with timed("search") as t:
+            results = await backend.hybrid_search(query, None, top_k=TOP_K, owners=owners)
+        log.info("[HYBRID/server-side] query=%r hits=%d (%.1fms)", query[:80], len(results), t.ms)
+        return results
+
+    loop = asyncio.get_event_loop()
     # Embedding is CPU-bound — run in thread so event loop stays free
     async with timed("embed") as t:
         embedding = await loop.run_in_executor(
@@ -50,17 +61,17 @@ async def hybrid_search(query: str, owners: list[str] | None = None) -> list[dic
         )
     log.info("[EMBED] %.1fms", t.ms)
 
-    # ES search is native async — no thread needed
-    async with timed("es_search") as t:
-        results = await get_search_backend().hybrid_search(
+    async with timed("search") as t:
+        results = await backend.hybrid_search(
             query, embedding.tolist(), top_k=TOP_K, owners=owners
         )
-    log.info("[ES HYBRID] query=%r hits=%d (%.1fms)", query[:80], len(results), t.ms)
+    log.info("[HYBRID] query=%r hits=%d (%.1fms)", query[:80], len(results), t.ms)
     return results
 
 
 async def hyde_search(query: str, owners: list[str] | None = None) -> list[dict]:
-    """HyDE: generate hypothetical answer (thread) then embed + search."""
+    """HyDE: generate a hypothetical answer, then search with it. Embedding is
+    handled by hybrid_search (local thread, or server-side for upstash)."""
     loop = asyncio.get_event_loop()
 
     async with timed("hyde_llm"):
@@ -69,16 +80,8 @@ async def hyde_search(query: str, owners: list[str] | None = None) -> list[dict]
         )
     log.info("[HyDE] hypothetical=%r", hypothetical[:100])
 
-    async with timed("embed"):
-        embedding = await loop.run_in_executor(
-            executor, get_embedding_model().encode, hypothetical
-        )
-
-    async with timed("es_search") as t:
-        results = await get_search_backend().hybrid_search(
-            hypothetical, embedding.tolist(), top_k=TOP_K, owners=owners
-        )
-    log.info("[HyDE] hits=%d (%.1fms)", len(results), t.ms)
+    results = await hybrid_search(hypothetical, owners=owners)
+    log.info("[HyDE] hits=%d", len(results))
     return results
 
 
@@ -192,20 +195,22 @@ async def retrieve_context_with_sources(
     emit(log, "pipeline_start", query_id=query_id, strategy=strategy, owners=owners)
 
     loop = asyncio.get_event_loop()
+    backend = get_search_backend()
+    server_side = getattr(backend, "server_side_embeddings", False)
 
-    # Embed query for cache lookup — reused if cache miss
-    async with timed("embed_query") as t:
-        query_embedding = await loop.run_in_executor(
-            executor, get_embedding_model().encode, query
-        )
-        query_embedding_list = query_embedding.tolist()
-
-    # Only cache public-only queries. A query scoped to a private session must
-    # never be served from (or written to) the shared semantic cache, or Session
-    # B could receive Session A's cached answer.
-    cacheable = owners == ["public"]
+    # The semantic cache is keyed on a local query embedding. Server-side backends
+    # (upstash) have no local model, so caching is skipped there (it's paired with
+    # NullCache anyway). Only public-only queries are ever cacheable — a private
+    # session's query must never be served from the shared cache.
+    query_embedding_list = None
+    cacheable = (owners == ["public"]) and not server_side
 
     if cacheable:
+        async with timed("embed_query"):
+            query_embedding = await loop.run_in_executor(
+                executor, get_embedding_model().encode, query
+            )
+            query_embedding_list = query_embedding.tolist()
         async with timed("cache_check"):
             cached = await get_cache_backend().get(query_embedding_list)
         if cached:
@@ -222,13 +227,17 @@ async def retrieve_context_with_sources(
         else:
             candidates = await hybrid_search(query, owners=owners)
 
-    # Rerank
-    reranked = await rerank(query, candidates)
-    if reranked:
-        emit(log, "rerank_scores", query_id=query_id,
-             top_score=round(reranked[0].get("rerank_score", 0), 3),
-             bottom_score=round(reranked[-1].get("rerank_score", 0), 3),
-             num_docs=len(reranked))
+    # Rerank. Server-side backends already return hybrid-fused, ranked results, so
+    # we skip the (torch-based) cross-encoder and just take the top FINAL_K.
+    if server_side:
+        reranked = candidates[:FINAL_K]
+    else:
+        reranked = await rerank(query, candidates)
+        if reranked:
+            emit(log, "rerank_scores", query_id=query_id,
+                 top_score=round(reranked[0].get("rerank_score", 0), 3),
+                 bottom_score=round(reranked[-1].get("rerank_score", 0), 3),
+                 num_docs=len(reranked))
 
     # Parent-doc dedup + context build
     seen_parents: set[str] = set()

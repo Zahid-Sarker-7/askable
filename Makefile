@@ -1,4 +1,4 @@
-.PHONY: backend frontend dev ingest setup clean backend-memory dev-memory
+.PHONY: backend frontend dev ingest setup clean backend-memory dev-memory backend-upstash ingest-upstash
 
 # ── Two ways to run the backend ────────────────────────────────────────
 # ELASTICSEARCH profile (default): real ES + Redis. Needs `make infra` up and
@@ -14,6 +14,16 @@ backend:
 # Start FastAPI backend — in-memory profile (no ES/Redis needed)
 backend-memory:
 	BACKEND=memory .venv/bin/uvicorn main:app --reload --port 8000
+
+# Start FastAPI backend — Upstash serverless profile (needs UPSTASH_* env vars).
+# Set them in .env or the shell; Upstash embeds server-side (no local models).
+backend-upstash:
+	BACKEND=upstash .venv/bin/uvicorn main:app --reload --port 8000
+
+# One-time: ingest the sample docs into the Upstash index as owner="public".
+# Upstash is persistent, so this is run once (not on every server start).
+ingest-upstash:
+	BACKEND=upstash .venv/bin/python ingest.py
 
 # Start Next.js frontend (port 3000, hot module replacement)
 frontend:

@@ -10,8 +10,15 @@ COLLECTION_NAME = "askable"
 # -- Retrieval backend selection ---------------------------------
 # "elasticsearch" → ES + Redis (local dev / prod). Needs the infra services.
 # "memory"        → in-process hybrid index (numpy kNN + BM25), no services.
-#                   Used for the free single-container hosted demo (HF Spaces).
+# "upstash"       → Upstash Vector (serverless hybrid, server-side embeddings).
+#                   Torch-free — used for the free serverless deploy (Vercel).
 BACKEND = os.getenv("BACKEND", "elasticsearch")
+
+# -- Upstash Vector (serverless hybrid backend) ------------------
+# Create a HYBRID index in the Upstash console with hosted dense + sparse
+# embedding models, then set these from its REST credentials.
+UPSTASH_VECTOR_REST_URL = os.getenv("UPSTASH_VECTOR_REST_URL", "")
+UPSTASH_VECTOR_REST_TOKEN = os.getenv("UPSTASH_VECTOR_REST_TOKEN", "")
 
 # -- Elasticsearch (Phase C — unified dense + sparse backend) ----
 ES_URL = os.getenv("ES_URL", "http://localhost:9200")

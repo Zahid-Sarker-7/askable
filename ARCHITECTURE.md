@@ -293,26 +293,36 @@ askable/
 
 ---
 
-## 11. Two backend profiles
+## 11. Three backend profiles
 
 The retrieval store is pluggable (the `get_search_backend()` seam), selected by the
-`BACKEND` env var — the rest of the pipeline is identical:
+`BACKEND` env var — the rest of the pipeline is identical. A `server_side_embeddings`
+capability flag on each backend tells `rag.py` whether to embed locally + cross-encoder
+rerank (es/memory) or defer both to the store (upstash).
 
-| `BACKEND=elasticsearch` (prod / local) | `BACKEND=memory` (free single-container demo) |
-|---|---|
-| Elasticsearch (dense + BM25) + Redis cache | in-process numpy kNN + `rank_bm25`, `NullCache` |
-| needs Docker infra + `make ingest` | no infra; sample docs ingested at boot |
-| uploads persist (ES volume) | uploads live in RAM (reset on restart) |
+| | `elasticsearch` | `memory` | `upstash` |
+|---|---|---|---|
+| Store | ES (dense+BM25) + Redis | in-process numpy kNN + `rank_bm25` | Upstash Vector (serverless hybrid) |
+| Embeddings | local (torch) | local (torch) | **server-side** (Upstash-hosted) |
+| Rerank | cross-encoder | cross-encoder | none (Upstash fuses dense+sparse) |
+| Deps | torch | torch | **torch-free** |
+| Deploy | self-host / VM | one container | **Vercel serverless** |
 
-The `memory` profile re-implements exactly what ES does for us (same RRF, k=60) so the
-whole app runs free in one container (Hugging Face Spaces). See
-[backends/memory_backend.py](backends/memory_backend.py).
+The `memory` profile re-implements exactly what ES does (same RRF, k=60) —
+[backends/memory_backend.py](backends/memory_backend.py). The `upstash` profile pushes
+embedding + hybrid fusion to a managed service so the backend is light enough for a Vercel
+Python function — [backends/upstash_backend.py](backends/upstash_backend.py). Torch is
+imported lazily, only on the es/memory paths, so the serverless bundle never pulls it.
 
 ## 12. Run it locally
 
 ```bash
 # Zero-infra (in-process) — fastest way to try it:
 make dev-memory   # FastAPI (:8000, BACKEND=memory) + Next.js (:3000)
+
+# Serverless (Upstash) — matches the deployed app (set UPSTASH_* in .env):
+make ingest-upstash    # one-time: load samples into Upstash
+make backend-upstash   # FastAPI (:8000, BACKEND=upstash)
 
 # Full stack (Elasticsearch + Redis):
 make infra        # start ES + Redis (Docker)
@@ -322,3 +332,4 @@ make dev          # FastAPI (:8000) + Next.js (:3000)
 
 `make reindex` wipes the index + cache and re-ingests — needed after changing the
 embedding model (ES profile only; the memory profile rebuilds from `docs/` at boot).
+The deployed app runs the **upstash** profile on Vercel (see the README's Deployment section).

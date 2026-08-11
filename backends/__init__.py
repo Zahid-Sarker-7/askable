@@ -11,10 +11,20 @@ from __future__ import annotations
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-from sentence_transformers import SentenceTransformer
-from models import BACKEND, EMBEDDING_MODEL, ES_INDEX, ES_URL, REDIS_URL
+# NOTE: sentence_transformers (which pulls in torch) is imported LAZILY inside
+# initialize(), only for the es/memory profiles. The upstash profile embeds
+# server-side and must stay torch-free so it fits a Vercel serverless function.
+from models import (
+    BACKEND,
+    EMBEDDING_MODEL,
+    ES_INDEX,
+    ES_URL,
+    REDIS_URL,
+    UPSTASH_VECTOR_REST_TOKEN,
+    UPSTASH_VECTOR_REST_URL,
+)
 
-_embedding_model: SentenceTransformer | None = None
+_embedding_model = None      # SentenceTransformer | None (None for the upstash profile)
 _search_backend = None
 _cache_backend = None
 _lock = asyncio.Lock()
@@ -36,13 +46,28 @@ async def initialize():
 
         loop = asyncio.get_event_loop()
 
-        # Load embedding model in thread (slow first-time download)
+        if BACKEND == "upstash":
+            # Serverless profile: Upstash embeds server-side, so we load NO local
+            # model (stays torch-free for Vercel). Persistent store → no boot-ingest;
+            # sample docs are ingested once via `make ingest-upstash`.
+            from backends.upstash_backend import UpstashBackend
+            from backends.null_cache import NullCache
+            _search_backend = UpstashBackend(
+                url=UPSTASH_VECTOR_REST_URL, token=UPSTASH_VECTOR_REST_TOKEN
+            )
+            await _search_backend.ensure_index()
+            _cache_backend = NullCache()
+            await _cache_backend.ensure_index()
+            return
+
+        # es + memory profiles need the local embedding model (imports torch).
+        from sentence_transformers import SentenceTransformer
         _embedding_model = await loop.run_in_executor(
             executor, SentenceTransformer, EMBEDDING_MODEL
         )
 
         if BACKEND == "memory":
-            # In-process profile (free single-container demo): no ES, no Redis.
+            # In-process profile (single-container, no infra): no ES, no Redis.
             from backends.memory_backend import MemoryBackend
             from backends.null_cache import NullCache
             _search_backend = MemoryBackend()
@@ -85,10 +110,15 @@ async def _boot_ingest_samples():
     log.info("Memory backend boot-ingest: %d chunks from %d sample docs", count, len(documents))
 
 
-def get_embedding_model() -> SentenceTransformer:
-    """Return the shared embedding model. Must call initialize() first."""
+def get_embedding_model():
+    """Return the shared embedding model (es/memory profiles). Must call initialize() first.
+
+    Not available in the upstash profile (embeddings are server-side)."""
     if _embedding_model is None:
-        raise RuntimeError("Backends not initialized — call await initialize() at startup")
+        raise RuntimeError(
+            "No local embedding model — either backends aren't initialized, or "
+            "BACKEND=upstash (server-side embeddings)."
+        )
     return _embedding_model
 
 
