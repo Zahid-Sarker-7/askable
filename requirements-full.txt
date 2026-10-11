@@ -1,0 +1,18 @@
+# Askable — FULL deps for the es/memory profiles and the Dockerfile.
+# Adds the local ML stack (torch etc.) on top of the slim serverless set.
+# Install CPU torch via the PyTorch CPU wheel index (see Dockerfile / README).
+
+-r requirements.txt
+
+# -- Local retrieval / ML --
+torch==2.12.1
+sentence-transformers==5.6.0
+numpy==1.26.4
+rank-bm25==0.2.2
+
+# -- Local document loaders (heavier) --
+langchain-community==0.2.19
+
+# -- Self-hosted backends --
+elasticsearch==9.4.1
+redis==8.0.1

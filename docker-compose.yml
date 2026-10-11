@@ -1,0 +1,49 @@
+# Askable — Infrastructure Services (Elasticsearch + Redis)
+#
+# Start:        docker compose up -d
+# Stop:         docker compose down
+# Logs:         docker compose logs -f
+# Status:       docker compose ps
+# Nuke data:    docker compose down -v
+
+services:
+  # ── Elasticsearch ──────────────────────────────────────────────
+  # Unified backend for dense vector search + BM25 sparse search + hybrid RRF.
+  # Replaces: ChromaDB (vector store) + in-memory BM25 (keyword search).
+  # Native kNN + BM25 + RRF in a single query — no Python-side fusion needed.
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.0.0
+    ports:
+      - "9200:9200"                     # REST API — Python talks here
+    volumes:
+      - es_data:/usr/share/elasticsearch/data   # persist index across restarts
+    environment:
+      - discovery.type=single-node              # single node (dev mode)
+      - xpack.security.enabled=false            # no auth (dev only — never in prod)
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m          # cap JVM at 512MB RAM
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -v '\"status\":\"red\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s                 # ES takes ~30s to fully start
+
+  # ── Redis Stack ────────────────────────────────────────────────
+  # Semantic query cache. Embeds queries as vectors and finds similar past queries.
+  # "redis-stack-server" includes RediSearch module for vector similarity search.
+  # Plain "redis" image cannot do vector search — must use redis-stack-server.
+  redis:
+    image: redis/redis-stack-server:latest
+    ports:
+      - "6379:6379"        # map host port 6379 to container port 6379
+    volumes:
+      - redis_data:/data   # persist data at /data inside the container
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  es_data:
+  redis_data:
