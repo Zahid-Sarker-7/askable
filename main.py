@@ -257,7 +257,12 @@ async def rag_query(
             full_answer = "".join(collected)
             if not is_idk_response(full_answer):
                 score = await check_output_faithfulness(full_answer, context, executor)
-                if score < FAITHFULNESS_THRESHOLD:
+                if score is None:
+                    yield format_sse_event({
+                        "type": "warning",
+                        "message": "Couldn't verify this answer against the sources (check unavailable)",
+                    })
+                elif score < FAITHFULNESS_THRESHOLD:
                     yield format_sse_event({
                         "type": "warning",
                         "message": f"Answer may not be fully grounded in sources (score: {score:.2f})",
